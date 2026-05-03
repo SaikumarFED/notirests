@@ -1,45 +1,61 @@
-import { createBrowserClient } from '@supabase/ssr';
+import { createBrowserClient } from '@supabase/ssr'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
-
-// Helper function to get the current user
-export async function getCurrentUser() {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error(
+    'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY'
+  )
 }
 
-// Helper function to get the current user's profile
+export const supabase = createBrowserClient(
+  supabaseUrl || '',
+  supabaseAnonKey || ''
+)
+
+// Helper function to get current user
+export async function getCurrentUser() {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    return user
+  } catch (error) {
+    console.error('Error getting current user:', error)
+    return null
+  }
+}
+
+// Helper function to get current user profile
 export async function getCurrentUserProfile() {
-  const user = await getCurrentUser();
-  if (!user) return null;
+  const user = await getCurrentUser()
+
+  if (!user) return null
 
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
     .eq('id', user.id)
-    .single();
+    .single()
 
   if (error) {
-    console.error('Error fetching user profile:', error);
-    return null;
+    console.error('Error fetching user profile:', error)
+    return null
   }
 
-  return data;
+  return data
 }
 
-// Helper function to create or update user profile
+// Helper function to create/update profile
 export async function upsertUserProfile(
   userId: string,
   profile: {
-    email: string;
-    full_name?: string;
-    avatar_url?: string;
-    company_name?: string;
+    email: string
+    full_name?: string
+    avatar_url?: string
+    company_name?: string
   }
 ) {
   const { data, error } = await supabase
@@ -56,18 +72,22 @@ export async function upsertUserProfile(
       { onConflict: 'id' }
     )
     .select()
-    .single();
+    .single()
 
   if (error) {
-    console.error('Error upserting user profile:', error);
-    return null;
+    console.error('Error upserting user profile:', error)
+    return null
   }
 
-  return data;
+  return data
 }
 
-// Helper function to sign up
-export async function signUp(email: string, password: string, fullName?: string) {
+// Sign Up
+export async function signUp(
+  email: string,
+  password: string,
+  fullName?: string
+) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -76,62 +96,57 @@ export async function signUp(email: string, password: string, fullName?: string)
         full_name: fullName || '',
       },
     },
-  });
+  })
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error
 
-  // Create profile in profiles table
   if (data.user) {
     await upsertUserProfile(data.user.id, {
       email,
       full_name: fullName,
-    });
+    })
   }
 
-  return data;
+  return data
 }
 
-// Helper function to sign in
+// Sign In
 export async function signIn(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
-  });
+  })
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error
 
-  return data;
+  return data
 }
 
-// Helper function to sign out
+// Sign Out
 export async function signOut() {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    throw error;
-  }
+  const { error } = await supabase.auth.signOut()
+
+  if (error) throw error
 }
 
-// Helper function to sign in with OAuth
-export async function signInWithOAuth(provider: 'google' | 'github') {
-  // Safe window check for SSR
-  const redirectTo = typeof window !== 'undefined' 
-    ? `${window.location.origin}/auth/callback` 
-    : undefined;
+// OAuth Login
+export async function signInWithOAuth(
+  provider: 'google' | 'github'
+) {
+  const redirectTo =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/auth/callback`
+      : undefined
 
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider,
-    options: {
-      redirectTo,
-    },
-  });
+  const { data, error } =
+    await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo,
+      },
+    })
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error
 
-  return data;
+  return data
 }
