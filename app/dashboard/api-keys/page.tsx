@@ -30,33 +30,24 @@ export default function APIKeysPage() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const generateKey = () => {
+  const generateKey = async () => {
     if (!newKeyLabel) return;
 
-    const chars =
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    try {
+      const res = await fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: newKeyLabel }),
+      });
 
-    let randomPart = '';
-
-    for (let i = 0; i < 32; i++) {
-      randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+      if (res.ok) {
+        const newKey = await res.json();
+        setGeneratedKey(newKey);
+        setKeySaved(false);
+      }
+    } catch (error) {
+      console.error('Generate key error:', error);
     }
-
-    // safer prefix (not flagged by GitHub)
-    const fullKey = `demo_${randomPart}`;
-
-    const newKey: APIKey = {
-      id: `key-${Date.now()}`,
-      label: newKeyLabel,
-      fullKey,
-      preview: fullKey.slice(0, 12) + '••••••',
-      createdAt: new Date().toLocaleDateString(),
-      lastUsed: null,
-      status: 'active',
-    };
-
-    setGeneratedKey(newKey);
-    setKeySaved(false);
   };
 
   const confirmSaveKey = () => {
@@ -69,10 +60,33 @@ export default function APIKeysPage() {
     setKeySaved(false);
   };
 
-  const deleteKey = (id: string) => {
-    setApiKeys(apiKeys.filter((key: APIKey) => key.id !== id));
+  const deleteKey = async (id: string) => {
+    try {
+      const res = await fetch(`/api/keys?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setApiKeys(apiKeys.filter((key: APIKey) => key.id !== id));
+      }
+    } catch (error) {
+      console.error('Delete key error:', error);
+    }
     setShowDeleteConfirm(null);
   };
+
+  // Load keys from API on mount
+  useState(() => {
+    const fetchKeys = async () => {
+      try {
+        const res = await fetch('/api/keys');
+        if (res.ok) {
+          const data = await res.json();
+          setApiKeys(data);
+        }
+      } catch (error) {
+        console.error('Failed to load API keys:', error);
+      }
+    };
+    fetchKeys();
+  });
 
   return (
     <div className="p-8">

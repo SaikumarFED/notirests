@@ -19,54 +19,43 @@ export default function DashboardOverview() {
   const [apiCallsToday, setApiCallsToday] = useState(0);
   const [mounted, setMounted] = useState(false);
 
-  // Load data from localStorage on mount
+  // Load real data on mount
   useEffect(() => {
     setMounted(true);
-    try {
-      const savedConnections = localStorage.getItem('notirest_connections');
-      const savedApiKeys = localStorage.getItem('notirest_api_keys');
-      const savedApiCalls = localStorage.getItem('notirest_api_calls_today');
+    
+    const fetchData = async () => {
+      try {
+        const [connRes, keysRes, usageRes] = await Promise.all([
+          fetch('/api/connections'),
+          fetch('/api/keys'),
+          fetch('/api/usage')
+        ]);
+        
+        if (connRes.ok) {
+          const data = await connRes.json();
+          setConnections(data);
+        }
+        
+        if (keysRes.ok) {
+          const data = await keysRes.json();
+          setApiKeys(data);
+        }
+        
+        if (usageRes.ok) {
+          const data = await usageRes.json();
+          // Assuming usageRes returns last 7 days, sum them up for "today" or total
+          const todayCalls = data.length > 0 ? data[data.length - 1].calls : 0;
+          setApiCallsToday(todayCalls);
+        }
+      } catch (error) {
+        console.error('Failed to load data:', error);
+      }
+    };
 
-      if (savedConnections) setConnections(JSON.parse(savedConnections));
-      if (savedApiKeys) setApiKeys(JSON.parse(savedApiKeys));
-      if (savedApiCalls) setApiCallsToday(parseInt(savedApiCalls));
-    } catch (error) {
-      console.error('Failed to load data:', error);
-    }
+    fetchData();
   }, []);
 
-  // Save connections to localStorage
-  useEffect(() => {
-    if (mounted) {
-      try {
-        localStorage.setItem('notirest_connections', JSON.stringify(connections));
-      } catch (error) {
-        console.error('Failed to save connections:', error);
-      }
-    }
-  }, [connections, mounted]);
 
-  // Save API keys to localStorage
-  useEffect(() => {
-    if (mounted) {
-      try {
-        localStorage.setItem('notirest_api_keys', JSON.stringify(apiKeys));
-      } catch (error) {
-        console.error('Failed to save API keys:', error);
-      }
-    }
-  }, [apiKeys, mounted]);
-
-  // Save API calls to localStorage
-  useEffect(() => {
-    if (mounted) {
-      try {
-        localStorage.setItem('notirest_api_calls_today', apiCallsToday.toString());
-      } catch (error) {
-        console.error('Failed to save API calls:', error);
-      }
-    }
-  }, [apiCallsToday, mounted]);
 
   const hasConnections = connections.length > 0;
 

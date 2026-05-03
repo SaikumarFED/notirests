@@ -3,9 +3,13 @@
 import { Button } from '@/components/ui/button';
 import { Check, Download, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '@/lib/auth-context';
 
 export default function BillingPage() {
-  const [currentPlan, setCurrentPlan] = useState<'free' | 'pro' | 'agency'>('free');
+  const { profile } = useAuth();
+  const currentPlan = (profile?.plan as 'free' | 'pro' | 'agency') || 'free';
+  const apiCallsThisMonth = profile?.api_calls_this_month || 0;
+  
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [billingHistory] = useState([
     {
@@ -45,7 +49,7 @@ export default function BillingPage() {
               <div className="space-y-3 mb-8">
                 <div className="flex items-center gap-3">
                   <Check className="w-5 h-5 text-primary" />
-                  <span className="text-foreground">{currentPlanInfo.calls.toLocaleString()} API Calls/month</span>
+                  <span className="text-foreground">{apiCallsThisMonth.toLocaleString()} / {currentPlanInfo.calls.toLocaleString()} API Calls this month</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <Check className="w-5 h-5 text-primary" />
@@ -88,7 +92,11 @@ export default function BillingPage() {
                   </>
                 )}
                 {currentPlan === 'free' && (
-                  <Button className="w-full bg-primary hover:bg-primary/90">
+                  <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => {
+                    // TODO: DODO_PAYMENTS_API_KEY=
+                    // TODO: DODO_PRO_PRODUCT_ID=
+                    // TODO: Redirect to Dodo Checkout
+                  }}>
                     Upgrade to Pro
                   </Button>
                 )}
@@ -157,18 +165,26 @@ export default function BillingPage() {
           <h3 className="text-lg font-bold text-foreground mb-4">Other Plans</h3>
           <div className="space-y-3">
             {(['free', 'pro', 'agency'] as const).map((plan) => (
-              <button
+              <div
                 key={plan}
-                onClick={() => setCurrentPlan(plan)}
                 className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
                   currentPlan === plan
                     ? 'border-primary bg-primary/5'
-                    : 'border-border bg-card hover:border-primary/50'
+                    : 'border-border bg-card'
                 }`}
               >
                 <p className="font-bold text-foreground capitalize">{plan} Plan</p>
                 <p className="text-sm text-muted-foreground">${plans[plan].price}/month</p>
-              </button>
+                {currentPlan !== plan && (
+                  <Button variant="outline" size="sm" className="mt-2 w-full" onClick={() => {
+                    // TODO: DODO_PAYMENTS_API_KEY=
+                    // TODO: DODO_AGENCY_PRODUCT_ID= / DODO_PRO_PRODUCT_ID=
+                    // TODO: Handle plan change via Dodo
+                  }}>
+                    Select Plan
+                  </Button>
+                )}
+              </div>
             ))}
           </div>
 

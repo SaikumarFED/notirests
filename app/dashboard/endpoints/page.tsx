@@ -26,27 +26,22 @@ export default function EndpointsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
-  // Load endpoints from localStorage on mount
+  // Load endpoints from API on mount
   useEffect(() => {
     setMounted(true);
-    try {
-      const saved = localStorage.getItem('notirest_endpoints');
-      if (saved) setEndpoints(JSON.parse(saved));
-    } catch (error) {
-      console.error('Failed to load endpoints:', error);
-    }
-  }, []);
-
-  // Save endpoints to localStorage
-  useEffect(() => {
-    if (mounted) {
+    const fetchEndpoints = async () => {
       try {
-        localStorage.setItem('notirest_endpoints', JSON.stringify(endpoints));
+        const res = await fetch('/api/connections');
+        if (res.ok) {
+          const data = await res.json();
+          setEndpoints(data);
+        }
       } catch (error) {
-        console.error('Failed to save endpoints:', error);
+        console.error('Failed to load endpoints:', error);
       }
-    }
-  }, [endpoints, mounted]);
+    };
+    fetchEndpoints();
+  }, []);
 
   const generateSlug = (name: string) => {
     return name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -97,7 +92,7 @@ export default function EndpointsPage() {
     }, 1500);
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const newErrors: Record<string, string> = {};
 
     if (!formData.name) newErrors.name = 'Connection name required';
@@ -109,21 +104,36 @@ export default function EndpointsPage() {
       return;
     }
 
-    const newEndpoint: Endpoint = {
-      id: `ep-${Date.now()}`,
-      name: formData.name,
-      databaseId: formData.databaseId,
-      slug: formData.slug,
-      status: 'active',
-    };
+    try {
+      const res = await fetch('/api/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
 
-    setEndpoints([...endpoints, newEndpoint]);
-    setFormData({ name: '', databaseId: '', slug: '' });
-    setErrors({});
+      if (res.ok) {
+        const newEndpoint = await res.json();
+        setEndpoints([newEndpoint, ...endpoints]);
+        setFormData({ name: '', databaseId: '', slug: '' });
+        setErrors({});
+      } else {
+        const text = await res.text();
+        setErrors({ name: text });
+      }
+    } catch (error) {
+      console.error('Create error:', error);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setEndpoints(endpoints.filter((ep) => ep.id !== id));
+  const handleDelete = async (id: string) => {
+    try {
+      const res = await fetch(`/api/connections?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setEndpoints(endpoints.filter((ep) => ep.id !== id));
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+    }
     setShowDeleteConfirm(null);
   };
 
@@ -171,7 +181,7 @@ export default function EndpointsPage() {
           {formData.slug && (
             <div className="p-3 bg-secondary border border-border rounded-lg">
               <p className="text-xs text-muted-foreground">Your endpoint will be:</p>
-              <p className="font-mono font-semibold text-foreground">https://notirest.io/api/{formData.slug}</p>
+              <p className="font-mono font-semibold text-foreground">https://notirest.io/api/v1/{formData.slug}</p>
             </div>
           )}
 
@@ -239,7 +249,7 @@ export default function EndpointsPage() {
                       <span className="px-2 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded">
                         {method}
                       </span>
-                      <span className="font-mono text-sm text-foreground">https://notirest.io/api/{endpoint.slug}</span>
+                      <span className="font-mono text-sm text-foreground">https://notirest.io/api/v1/{endpoint.slug}</span>
                     </div>
                   ))}
                 </div>
@@ -248,11 +258,11 @@ export default function EndpointsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => copyToClipboard(`https://notirest.io/api/${endpoint.slug}`)}
+                    onClick={() => copyToClipboard(`https://notirest.io/api/v1/${endpoint.slug}`)}
                     className="gap-2"
                   >
                     <Copy className="w-4 h-4" />
-                    {copied === `https://notirest.io/api/${endpoint.slug}` ? 'Copied!' : 'Copy URL'}
+                    {copied === `https://notirest.io/api/v1/${endpoint.slug}` ? 'Copied!' : 'Copy URL'}
                   </Button>
                   <Button variant="outline" size="sm">
                     Try it Out

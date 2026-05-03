@@ -12,6 +12,25 @@ export default function SettingsPage() {
     email: profile?.email || '',
     company: profile?.company_name || '',
   });
+  
+  const handleSave = async () => {
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: formData.fullName,
+          company_name: formData.company,
+        }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
+    } catch (error) {
+      console.error('Save profile error:', error);
+    }
+  };
   const [saved, setSaved] = useState(false);
   const [notifications, setNotifications] = useState({
     highUsageAlerts: true,
@@ -82,10 +101,7 @@ export default function SettingsPage() {
 
               <Button
                 className="bg-primary hover:bg-primary/90"
-                onClick={() => {
-                  setSaved(true);
-                  setTimeout(() => setSaved(false), 3000);
-                }}
+                onClick={handleSave}
               >
                 {saved ? '✓ Changes Saved' : 'Save Changes'}
               </Button>
