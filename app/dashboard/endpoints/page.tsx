@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button';
 import { Plus, Copy, Trash2, Check, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
 interface Endpoint {
   id: string;
@@ -25,19 +26,29 @@ export default function EndpointsPage() {
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [notionStatus, setNotionStatus] = useState<{ connected: boolean; workspace_name?: string }>({ connected: false });
 
   // Load endpoints from API on mount
   useEffect(() => {
     setMounted(true);
     const fetchEndpoints = async () => {
       try {
-        const res = await fetch('/api/connections');
-        if (res.ok) {
-          const data = await res.json();
+        const [connRes, statusRes] = await Promise.all([
+          fetch('/api/connections'),
+          fetch('/api/workspace-status')
+        ]);
+        
+        if (connRes.ok) {
+          const data = await connRes.json();
           setEndpoints(data);
         }
+
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          setNotionStatus(status);
+        }
       } catch (error) {
-        console.error('Failed to load endpoints:', error);
+        console.error('Failed to load data:', error);
       }
     };
     fetchEndpoints();
@@ -145,8 +156,34 @@ export default function EndpointsPage() {
         <p className="text-muted-foreground">Manage your Notion database API endpoints.</p>
       </div>
 
+      {/* Notion Connection Status Banner */}
+      {notionStatus.connected ? (
+        <div className="mb-8 p-4 bg-green-500/10 border border-green-500/20 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Check className="w-5 h-5 text-green-600" />
+            <p className="text-sm font-medium text-green-800">
+              Connected to Notion workspace: <span className="font-bold">{notionStatus.workspace_name}</span>
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-8 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600" />
+            <p className="text-sm font-medium text-amber-800">
+              Notion workspace not connected. You must connect Notion to create endpoints.
+            </p>
+          </div>
+          <Button asChild size="sm" className="bg-amber-600 hover:bg-amber-700 text-white">
+            <Link href="/api/auth/notion">
+              Connect Notion
+            </Link>
+          </Button>
+        </div>
+      )}
+
       {/* Connection Form */}
-      <div className="mb-12 p-8 bg-card border border-border rounded-2xl">
+      <div className={`mb-12 p-8 bg-card border border-border rounded-2xl ${!notionStatus.connected ? 'opacity-50 pointer-events-none' : ''}`}>
         <h2 className="text-xl font-bold text-foreground mb-6">Connect a Notion Database</h2>
 
         <div className="space-y-4">

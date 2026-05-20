@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Mail, Lock, User, Loader2, AlertCircle } from 'lucide-react';
-import { signInWithOAuth } from '@/lib/supabase';
+import { Mail, Lock, User, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { signInWithOAuth, supabase } from '@/lib/supabase';
 
 interface AuthFormProps {
   mode: 'login' | 'signup';
@@ -21,7 +21,10 @@ export function AuthForm({ mode, onSubmit }: AuthFormProps) {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'github' | null>(null);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [showResend, setShowResend] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -55,12 +58,43 @@ export function AuthForm({ mode, onSubmit }: AuthFormProps) {
 
     try {
       await onSubmit(email, password, fullName);
+      if (mode === 'signup') {
+        setSuccessMsg(`Check your email at ${email} for a verification link before logging in.`);
+        setLoading(false);
+        return;
+      }
       router.push('/dashboard');
-    } catch (err) {
+    } catch (err: any) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred';
-      setError(errorMessage);
+      if (errorMessage.toLowerCase().includes('email not confirmed')) {
+        setError('Email not confirmed. Please check your inbox.');
+        setShowResend(true);
+      } else {
+        setError(errorMessage);
+        setShowResend(false);
+      }
     } finally {
-      setLoading(false);
+      if (mode !== 'signup' || error) {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleResend = async () => {
+    setResending(true);
+    setError('');
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+      });
+      if (error) throw error;
+      setSuccessMsg('Verification email resent. Please check your inbox.');
+      setShowResend(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to resend verification email');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -79,9 +113,31 @@ export function AuthForm({ mode, onSubmit }: AuthFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="p-4 bg-destructive/10 border border-destructive rounded-lg flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
-          <p className="text-sm text-destructive">{error}</p>
+        <div className="p-4 bg-destructive/10 border border-destructive rounded-lg flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+          {showResend && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResend}
+              disabled={resending}
+              className="w-full"
+            >
+              {resending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Resend verification email
+            </Button>
+          )}
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <p className="text-sm text-green-700">{successMsg}</p>
         </div>
       )}
 

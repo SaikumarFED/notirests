@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -42,27 +43,31 @@ export async function GET(request: NextRequest) {
     const accessToken = data.access_token;
     const workspaceId = data.workspace_id;
     const workspaceName = data.workspace_name;
+    const workspaceIcon = data.workspace_icon || null;
+    const botId = data.bot_id || null;
 
-    // We don't save the connection here because Notion OAuth grants access to the workspace.
-    // The user still needs to pick a specific database to connect to. 
-    // We will redirect them back to the dashboard with the token so they can create an endpoint.
-    // However, to keep it secure, we should store it temporarily or just pass it to the frontend via a secure mechanism or store it in a session.
-    // Actually, the prompt says: "stores token in Supabase connections table". 
-    // But we don't have the database ID yet. The user selects pages during the Notion OAuth.
-    // The token response includes `duplicated_template_id` if they duplicated a template, but usually, we just store the access_token.
-    // Let's store a generic "workspace" connection, or just pass it back.
-    // The prompt says: POST /api/connections creates new connection with notion_database_id, slug, label, notion_access_token.
-    // So the OAuth callback should probably just pass the access token back securely, OR store it temporarily.
-    // Since this is a simple implementation, let's redirect with the token in a hash or query param (not ideal for prod but common for simple SaaS), or store it in a cookie.
-    
-    const response = NextResponse.redirect(new URL('/dashboard/endpoints?success=true', request.url));
-    response.cookies.set('notion_access_token', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 30 // 30 days
-    });
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user) {
+      await supabaseAdmin
+        .from('notion_workspaces')
+        .upsert({
+          user_id: user.id,
+          access_token: accessToken,
+          workspace_id: workspaceId,
+          workspace_name: workspaceName,
+          workspace_icon: workspaceIcon,
+          bot_id: botId,
+          updated_at: new Date().toISOString()
+        }, { 
+          onConflict: 'user_id,workspace_id' 
+        });
+    }
+
+    // Remove any old cookie if it exists to clean up
+    const response = NextResponse.redirect(new URL('/dashboard/endpoints?notion=connected', request.url));
+    response.cookies.delete('notion_access_token');
 
     return response;
 

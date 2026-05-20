@@ -40,6 +40,26 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Add security headers
+  supabaseResponse.headers.set('X-Content-Type-Options', 'nosniff');
+  supabaseResponse.headers.set('X-Frame-Options', 'DENY');
+  supabaseResponse.headers.set('X-XSS-Protection', '1; mode=block');
+  supabaseResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  // Handle API CORS
+  if (request.nextUrl.pathname.startsWith('/api/v1/')) {
+    if (request.method === 'OPTIONS') {
+      const preflightHeaders = new Headers(supabaseResponse.headers);
+      preflightHeaders.set('Access-Control-Allow-Origin', '*');
+      preflightHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      preflightHeaders.set('Access-Control-Allow-Headers', 'x-api-key, Content-Type');
+      return new NextResponse(null, { headers: preflightHeaders, status: 204 });
+    }
+    supabaseResponse.headers.set('Access-Control-Allow-Origin', '*');
+    supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    supabaseResponse.headers.set('Access-Control-Allow-Headers', 'x-api-key, Content-Type');
+  }
+
   return supabaseResponse;
 }
 

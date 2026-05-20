@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getNotionClient, cleanNotionPage } from '@/lib/notion';
+import { getNotionClient, cleanNotionPage, buildNotionProperties } from '@/lib/notion';
+import { unauthorized, notFound, rateLimited, serverError, notionDisconnected } from '@/lib/api-errors';
 
-// Create a service role client to bypass RLS for API key verification
-// We can't use the standard server client because the request isn't authenticated via cookies
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 function getAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseAdminKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -18,11 +20,10 @@ const PLAN_LIMITS: Record<string, number> = {
 
 async function authenticateAndLog(request: NextRequest, endpointSlug: string, method: string) {
   const apiKey = request.headers.get('x-api-key');
-  if (!apiKey) return { error: 'Missing x-api-key header', status: 401 };
+  if (!apiKey) return { error: unauthorized('Missing x-api-key header'), headers: {} };
 
   const supabase = getAdminClient();
 
-  // 1. Verify API Key
   const { data: keyData, error: keyError } = await supabase
     .from('api_keys')
     .select('user_id, is_active')
@@ -30,15 +31,13 @@ async function authenticateAndLog(request: NextRequest, endpointSlug: string, me
     .single();
 
   if (keyError || !keyData || !keyData.is_active) {
-    return { error: 'Invalid or inactive API key', status: 401 };
+    return { error: unauthorized('Invalid or inactive API key'), headers: {} };
   }
 
   const userId = keyData.user_id;
 
-  // 2. Update last_used
   await supabase.from('api_keys').update({ last_used: new Date().toISOString() }).eq('key', apiKey);
 
-  // 3. Verify Connection
   const { data: connection, error: connError } = await supabase
     .from('connections')
     .select('notion_database_id, notion_access_token')
@@ -47,10 +46,29 @@ async function authenticateAndLog(request: NextRequest, endpointSlug: string, me
     .single();
 
   if (connError || !connection) {
-    return { error: 'Endpoint not found or does not belong to you', status: 404 };
+    return { error: notFound('Endpoint not found or does not belong to you'), headers: {} };
   }
 
-  // 4. Check Rate Limits
+  // Fallback token lookup in notion_workspaces
+  let token = connection.notion_access_token;
+  if (!token) {
+    const { data: workspace } = await supabase
+      .from('notion_workspaces')
+      .select('access_token')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (workspace?.access_token) {
+      token = workspace.access_token;
+    }
+  }
+
+  if (!token) {
+    return { error: notionDisconnected(), headers: {} };
+  }
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('plan, api_calls_this_month')
@@ -60,12 +78,20 @@ async function authenticateAndLog(request: NextRequest, endpointSlug: string, me
   const plan = profile?.plan || 'free';
   const calls = profile?.api_calls_this_month || 0;
   const limit = PLAN_LIMITS[plan] || PLAN_LIMITS['free'];
+  const remaining = Math.max(0, limit - calls);
+
+  const rateLimitHeaders = {
+    'X-RateLimit-Limit': limit.toString(),
+    'X-RateLimit-Remaining': remaining.toString(),
+    'X-RateLimit-Reset': 'Monthly',
+    'X-RateLimit-Plan': plan,
+  };
 
   if (calls >= limit) {
-    return { error: `Monthly API limit reached for plan: ${plan}`, status: 429 };
+    return { error: rateLimited(plan), headers: rateLimitHeaders };
   }
 
-  return { userId, connection, supabase };
+  return { userId, connection: { ...connection, notion_access_token: token }, supabase, headers: rateLimitHeaders };
 }
 
 async function logUsage(supabase: any, userId: string, endpointSlug: string, method: string, statusCode: number) {
@@ -75,108 +101,165 @@ async function logUsage(supabase: any, userId: string, endpointSlug: string, met
     method,
     status_code: statusCode
   });
-
   await supabase.rpc('increment_api_calls', { user_id_param: userId });
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ endpoint: string }> }) {
   const { endpoint } = await params;
   const auth = await authenticateAndLog(request, endpoint, 'GET');
-  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.error) return auth.error;
 
   const { searchParams } = new URL(request.url);
   const limit = parseInt(searchParams.get('limit') || '100');
+  
+  // Filtering and sorting
+  const filterParams = searchParams.getAll('filter');
+  const sortParams = searchParams.getAll('sort');
+  
+  let filter: any = undefined;
+  let sorts: any[] = [];
+
+  if (filterParams.length > 0) {
+    // For simplicity, we implement a single AND filter list
+    const andFilters: any[] = [];
+    for (const f of filterParams) {
+      const parts = f.split(':');
+      if (parts.length >= 2) {
+        const propName = parts[0];
+        const value = parts.slice(1).join(':'); // Re-join in case value contains colons
+        // We do a naive text search or exact match depending on Notion capabilities.
+        // A generic rich_text contains filter is most robust for strings.
+        andFilters.push({
+          property: propName,
+          rich_text: { contains: value }
+        });
+      }
+    }
+    if (andFilters.length > 0) {
+      filter = { and: andFilters };
+    }
+  }
+
+  if (sortParams.length > 0) {
+    for (const s of sortParams) {
+      const parts = s.split(':');
+      if (parts.length >= 2) {
+        const propName = parts[0];
+        const dir = parts[1].toLowerCase() === 'desc' ? 'descending' : 'ascending';
+        if (propName === 'created_time' || propName === 'last_edited_time') {
+          sorts.push({ timestamp: propName, direction: dir });
+        } else {
+          sorts.push({ property: propName, direction: dir });
+        }
+      }
+    }
+  }
 
   try {
-    const notion = getNotionClient(auth.connection.notion_access_token);
+    const notion = getNotionClient(auth.connection!.notion_access_token);
     
-    // We can support filters/sorts from query params in a real production app.
-    // For now, basic query.
-    const response = await notion.databases.query({
-      database_id: auth.connection.notion_database_id,
+    const queryArgs: any = {
+      database_id: auth.connection!.notion_database_id,
       page_size: limit,
-    });
+    };
+
+    if (filter) queryArgs.filter = filter;
+    if (sorts.length > 0) queryArgs.sorts = sorts;
+
+    const response = await notion.databases.query(queryArgs);
 
     const results = response.results.map(cleanNotionPage);
-    await logUsage(auth.supabase, auth.userId, endpoint, 'GET', 200);
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'GET', 200);
 
-    return NextResponse.json({ data: results, has_more: response.has_more });
+    return NextResponse.json({ data: results, has_more: response.has_more }, { headers: auth.headers });
   } catch (error: any) {
-    await logUsage(auth.supabase, auth.userId, endpoint, 'GET', 500);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'GET', 500);
+    if (error.status === 401) return notionDisconnected();
+    return serverError(error.message);
   }
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ endpoint: string }> }) {
   const { endpoint } = await params;
   const auth = await authenticateAndLog(request, endpoint, 'POST');
-  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.error) return auth.error;
 
   try {
     const body = await request.json();
-    const notion = getNotionClient(auth.connection.notion_access_token);
+    const notion = getNotionClient(auth.connection!.notion_access_token);
+    
+    // buildNotionProperties will auto-convert simple JSON to complex Notion objects
+    const notionProps = await buildNotionProperties(notion, auth.connection!.notion_database_id, body);
     
     const response = await notion.pages.create({
-      parent: { database_id: auth.connection.notion_database_id },
-      properties: body, // Caller must format properties correctly for Notion API
+      parent: { database_id: auth.connection!.notion_database_id },
+      properties: notionProps,
     });
 
-    await logUsage(auth.supabase, auth.userId, endpoint, 'POST', 201);
-    return NextResponse.json(cleanNotionPage(response), { status: 201 });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'POST', 201);
+    return NextResponse.json(cleanNotionPage(response), { status: 201, headers: auth.headers });
   } catch (error: any) {
-    await logUsage(auth.supabase, auth.userId, endpoint, 'POST', 500);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'POST', 500);
+    if (error.status === 401) return notionDisconnected();
+    return serverError(error.message);
   }
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ endpoint: string }> }) {
   const { endpoint } = await params;
   const auth = await authenticateAndLog(request, endpoint, 'PATCH');
-  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.error) return auth.error;
 
   const { searchParams } = new URL(request.url);
   const pageId = searchParams.get('id');
-  if (!pageId) return NextResponse.json({ error: 'Missing page ?id parameter' }, { status: 400 });
+  if (!pageId) {
+    return NextResponse.json({ error: 'Missing page ?id parameter' }, { status: 400, headers: auth.headers });
+  }
 
   try {
     const body = await request.json();
-    const notion = getNotionClient(auth.connection.notion_access_token);
+    const notion = getNotionClient(auth.connection!.notion_access_token);
+    
+    const notionProps = await buildNotionProperties(notion, auth.connection!.notion_database_id, body);
     
     const response = await notion.pages.update({
       page_id: pageId,
-      properties: body,
+      properties: notionProps,
     });
 
-    await logUsage(auth.supabase, auth.userId, endpoint, 'PATCH', 200);
-    return NextResponse.json(cleanNotionPage(response));
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'PATCH', 200);
+    return NextResponse.json(cleanNotionPage(response), { headers: auth.headers });
   } catch (error: any) {
-    await logUsage(auth.supabase, auth.userId, endpoint, 'PATCH', 500);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'PATCH', 500);
+    if (error.status === 401) return notionDisconnected();
+    return serverError(error.message);
   }
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ endpoint: string }> }) {
   const { endpoint } = await params;
   const auth = await authenticateAndLog(request, endpoint, 'DELETE');
-  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (auth.error) return auth.error;
 
   const { searchParams } = new URL(request.url);
   const pageId = searchParams.get('id');
-  if (!pageId) return NextResponse.json({ error: 'Missing page ?id parameter' }, { status: 400 });
+  if (!pageId) {
+    return NextResponse.json({ error: 'Missing page ?id parameter' }, { status: 400, headers: auth.headers });
+  }
 
   try {
-    const notion = getNotionClient(auth.connection.notion_access_token);
+    const notion = getNotionClient(auth.connection!.notion_access_token);
     
-    // Archive the page
     const response = await notion.pages.update({
       page_id: pageId,
       archived: true,
     });
 
-    await logUsage(auth.supabase, auth.userId, endpoint, 'DELETE', 200);
-    return NextResponse.json({ success: true, id: response.id });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'DELETE', 200);
+    return NextResponse.json({ success: true, id: response.id }, { headers: auth.headers });
   } catch (error: any) {
-    await logUsage(auth.supabase, auth.userId, endpoint, 'DELETE', 500);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    await logUsage(auth.supabase, auth.userId!, endpoint, 'DELETE', 500);
+    if (error.status === 401) return notionDisconnected();
+    return serverError(error.message);
   }
 }

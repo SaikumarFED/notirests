@@ -11,6 +11,8 @@ export default function BillingPage() {
   const apiCallsThisMonth = profile?.api_calls_this_month || 0;
   
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [loadingCheckout, setLoadingCheckout] = useState<string | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [billingHistory] = useState([
     {
       date: 'April 24, 2024',
@@ -26,7 +28,48 @@ export default function BillingPage() {
     agency: { name: 'Agency', price: 49, calls: 500000 },
   };
 
+  const LEMONSQUEEZY_VARIANTS = {
+    pro: process.env.NEXT_PUBLIC_LS_PRO_VARIANT_ID || '',
+    agency: process.env.NEXT_PUBLIC_LS_AGENCY_VARIANT_ID || '',
+  };
+
   const currentPlanInfo = plans[currentPlan];
+
+  const handleCheckout = async (planType: 'pro' | 'agency') => {
+    try {
+      setLoadingCheckout(planType);
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variantId: LEMONSQUEEZY_VARIANTS[planType] }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (error) {
+      console.error('Checkout error:', error);
+    } finally {
+      setLoadingCheckout(null);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    try {
+      setCancelLoading(true);
+      const res = await fetch('/api/subscription/cancel', {
+        method: 'POST',
+      });
+      if (res.ok) {
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Cancel error:', error);
+    } finally {
+      setCancelLoading(false);
+      setShowCancelModal(false);
+    }
+  };
 
   return (
     <div className="p-8">
@@ -92,12 +135,12 @@ export default function BillingPage() {
                   </>
                 )}
                 {currentPlan === 'free' && (
-                  <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => {
-                    // TODO: DODO_PAYMENTS_API_KEY=
-                    // TODO: DODO_PRO_PRODUCT_ID=
-                    // TODO: Redirect to Dodo Checkout
-                  }}>
-                    Upgrade to Pro
+                  <Button 
+                    className="w-full bg-primary hover:bg-primary/90" 
+                    onClick={() => handleCheckout('pro')}
+                    disabled={loadingCheckout === 'pro'}
+                  >
+                    {loadingCheckout === 'pro' ? 'Loading...' : 'Upgrade to Pro'}
                   </Button>
                 )}
               </div>
@@ -148,11 +191,15 @@ export default function BillingPage() {
                   Your subscription will be canceled at the end of the current billing cycle. You will lose access to premium features.
                 </p>
                 <div className="flex gap-3">
-                  <Button variant="outline" onClick={() => setShowCancelModal(false)} className="flex-1">
+                  <Button variant="outline" onClick={() => setShowCancelModal(false)} className="flex-1" disabled={cancelLoading}>
                     Keep Subscription
                   </Button>
-                  <Button className="flex-1 bg-red-600 hover:bg-red-700 text-white">
-                    Cancel Anyway
+                  <Button 
+                    className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                    onClick={handleCancelSubscription}
+                    disabled={cancelLoading}
+                  >
+                    {cancelLoading ? 'Canceling...' : 'Cancel Anyway'}
                   </Button>
                 </div>
               </div>
@@ -176,12 +223,17 @@ export default function BillingPage() {
                 <p className="font-bold text-foreground capitalize">{plan} Plan</p>
                 <p className="text-sm text-muted-foreground">${plans[plan].price}/month</p>
                 {currentPlan !== plan && (
-                  <Button variant="outline" size="sm" className="mt-2 w-full" onClick={() => {
-                    // TODO: DODO_PAYMENTS_API_KEY=
-                    // TODO: DODO_AGENCY_PRODUCT_ID= / DODO_PRO_PRODUCT_ID=
-                    // TODO: Handle plan change via Dodo
-                  }}>
-                    Select Plan
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="mt-2 w-full" 
+                    onClick={() => {
+                      if (plan === 'free') return;
+                      handleCheckout(plan as 'pro' | 'agency');
+                    }}
+                    disabled={loadingCheckout === plan}
+                  >
+                    {loadingCheckout === plan ? 'Loading...' : 'Select Plan'}
                   </Button>
                 )}
               </div>

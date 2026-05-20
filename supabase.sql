@@ -1,8 +1,8 @@
--- Create profiles table
 CREATE TABLE public.profiles (
   id uuid REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
   email text NOT NULL,
   full_name text,
+  avatar_url text,
   company_name text,
   plan text DEFAULT 'free'::text,
   api_calls_this_month integer DEFAULT 0,
@@ -110,3 +110,60 @@ BEGIN
   WHERE id = user_id_param;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+ALTER TABLE public.profiles 
+ADD COLUMN IF NOT EXISTS avatar_url text;
+
+ALTER TABLE public.profiles
+ADD COLUMN IF NOT EXISTS ls_customer_id text,
+ADD COLUMN IF NOT EXISTS ls_subscription_id text,
+ADD COLUMN IF NOT EXISTS ls_subscription_status text,
+ADD COLUMN IF NOT EXISTS ls_variant_id text;
+
+CREATE TABLE public.notion_workspaces (
+  id uuid DEFAULT gen_random_uuid() 
+    PRIMARY KEY,
+  user_id uuid REFERENCES public.profiles(id) 
+    ON DELETE CASCADE NOT NULL,
+  access_token text NOT NULL,
+  workspace_id text,
+  workspace_name text,
+  workspace_icon text,
+  bot_id text,
+  created_at timestamp with time zone 
+    DEFAULT timezone('utc', now()) NOT NULL,
+  updated_at timestamp with time zone 
+    DEFAULT timezone('utc', now()) NOT NULL,
+  UNIQUE(user_id, workspace_id)
+);
+
+ALTER TABLE public.notion_workspaces 
+  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own workspaces"
+  ON public.notion_workspaces
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own workspaces"
+  ON public.notion_workspaces
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own workspaces"
+  ON public.notion_workspaces
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own workspaces"
+  ON public.notion_workspaces
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Monthly API calls reset via pg_cron
+-- Note: Requires pg_cron extension to be enabled in Supabase Dashboard
+SELECT cron.schedule(
+  'reset-monthly-api-calls',
+  '0 0 1 * *',
+  $$
+    UPDATE public.profiles 
+    SET api_calls_this_month = 0
+    WHERE api_calls_this_month > 0;
+  $$
+);

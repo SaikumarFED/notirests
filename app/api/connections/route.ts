@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -11,7 +14,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('connections')
-    .select('id, name:label, databaseId:notion_database_id, slug, status:is_active, createdAt:created_at')
+    .select('id, label, notion_database_id, endpoint_slug, is_active, created_at')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -23,11 +26,11 @@ export async function GET(request: NextRequest) {
   // Map to the format UI expects
   const formatted = data.map(d => ({
     id: d.id,
-    name: d.name,
-    databaseId: d.databaseId,
-    slug: d.slug,
+    name: d.label,
+    databaseId: d.notion_database_id,
+    slug: d.endpoint_slug,
     status: 'active',
-    createdAt: new Date(d.createdAt).toLocaleDateString(),
+    createdAt: new Date(d.created_at).toLocaleDateString(),
   }));
 
   return NextResponse.json(formatted);
@@ -48,12 +51,27 @@ export async function POST(request: NextRequest) {
     return new NextResponse('Missing required fields', { status: 400 });
   }
 
-  // Retrieve token from cookie (saved during OAuth callback)
-  const token = request.cookies.get('notion_access_token')?.value;
+  const { data: workspace } = await supabase
+    .from('notion_workspaces')
+    .select('access_token')
+    .eq('user_id', user.id)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .single();
 
-  if (!token) {
-    return new NextResponse('Notion not connected. Please connect Notion first.', { status: 400 });
+  if (!workspace?.access_token) {
+    return new NextResponse(
+      JSON.stringify({ 
+        error: 'Notion not connected',
+        message: 'Please connect your Notion workspace first',
+        action: 'connect_notion',
+        connect_url: '/api/auth/notion'
+      }),
+      { status: 400 }
+    );
   }
+
+  const token = workspace.access_token;
 
   const { data, error } = await supabase
     .from('connections')

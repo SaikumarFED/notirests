@@ -18,6 +18,8 @@ export default function DashboardOverview() {
   const [apiKeys, setApiKeys] = useState<any[]>([]);
   const [apiCallsToday, setApiCallsToday] = useState(0);
   const [mounted, setMounted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [notionConnected, setNotionConnected] = useState(false);
 
   // Load real data on mount
   useEffect(() => {
@@ -25,10 +27,11 @@ export default function DashboardOverview() {
     
     const fetchData = async () => {
       try {
-        const [connRes, keysRes, usageRes] = await Promise.all([
+        const [connRes, keysRes, usageRes, statusRes] = await Promise.all([
           fetch('/api/connections'),
           fetch('/api/keys'),
-          fetch('/api/usage')
+          fetch('/api/usage'),
+          fetch('/api/workspace-status')
         ]);
         
         if (connRes.ok) {
@@ -47,8 +50,15 @@ export default function DashboardOverview() {
           const todayCalls = data.length > 0 ? data[data.length - 1].calls : 0;
           setApiCallsToday(todayCalls);
         }
+
+        if (statusRes.ok) {
+          const data = await statusRes.json();
+          setNotionConnected(data.connected);
+        }
       } catch (error) {
         console.error('Failed to load data:', error);
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -139,17 +149,53 @@ export default function DashboardOverview() {
               ))}
             </div>
           ) : (
-            <div className="p-8 bg-card border border-border rounded-2xl text-center">
-              <Database className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-muted-foreground mb-6">
-                No connections yet. Connect your first Notion database to get started.
+            <div className="p-8 bg-card border border-border rounded-2xl">
+              <h3 className="text-lg font-bold text-foreground mb-4">Onboarding Checklist</h3>
+              <p className="text-muted-foreground mb-6 text-sm">
+                Complete these steps to get your first Notion API up and running.
               </p>
-              <Button asChild className="bg-primary hover:bg-primary/90">
-                <Link href="/dashboard/endpoints" className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  Add Connection
-                </Link>
-              </Button>
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${notionConnected ? 'bg-green-500 text-white' : 'bg-muted border border-border'}`}>
+                    {notionConnected && <span className="text-xs">✓</span>}
+                  </div>
+                  <span className={notionConnected ? 'text-foreground line-through opacity-70' : 'text-foreground font-medium'}>
+                    Connect your Notion workspace
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${hasConnections ? 'bg-green-500 text-white' : 'bg-muted border border-border'}`}>
+                    {hasConnections && <span className="text-xs">✓</span>}
+                  </div>
+                  <span className={hasConnections ? 'text-foreground line-through opacity-70' : 'text-foreground font-medium'}>
+                    Create your first endpoint
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${apiKeys.length > 0 ? 'bg-green-500 text-white' : 'bg-muted border border-border'}`}>
+                    {apiKeys.length > 0 && <span className="text-xs">✓</span>}
+                  </div>
+                  <span className={apiKeys.length > 0 ? 'text-foreground line-through opacity-70' : 'text-foreground font-medium'}>
+                    Generate an API key
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center ${apiCallsToday > 0 ? 'bg-green-500 text-white' : 'bg-muted border border-border'}`}>
+                    {apiCallsToday > 0 && <span className="text-xs">✓</span>}
+                  </div>
+                  <span className={apiCallsToday > 0 ? 'text-foreground line-through opacity-70' : 'text-foreground font-medium'}>
+                    Make your first API call
+                  </span>
+                </div>
+              </div>
+              {!notionConnected && (
+                <Button asChild className="mt-8 w-full bg-primary hover:bg-primary/90">
+                  <Link href="/api/auth/notion" className="flex items-center gap-2">
+                    <Database className="w-4 h-4" />
+                    Connect Notion Now
+                  </Link>
+                </Button>
+              )}
             </div>
           )}
         </div>
