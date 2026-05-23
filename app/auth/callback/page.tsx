@@ -1,17 +1,29 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function AuthCallback() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     const handleCallback = async () => {
       try {
-        // Handle the OAuth callback
-        await supabase.auth.getSession();
+        const code = searchParams.get('code');
+
+        if (code) {
+          const { error } =
+            await supabase.auth.exchangeCodeForSession(code);
+
+          if (error) {
+            console.error('Exchange session error:', error);
+            router.push('/login?error=auth_failed');
+            return;
+          }
+        }
+
         router.push('/dashboard');
       } catch (error) {
         console.error('Auth callback error:', error);
@@ -20,13 +32,15 @@ export default function AuthCallback() {
     };
 
     handleCallback();
-  }, [router]);
+  }, [router, searchParams]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="text-center">
         <div className="w-12 h-12 rounded-full border-4 border-border border-t-accent animate-spin mx-auto mb-4" />
-        <p className="text-muted-foreground">Completing sign in...</p>
+        <p className="text-muted-foreground">
+          Completing sign in...
+        </p>
       </div>
     </div>
   );
